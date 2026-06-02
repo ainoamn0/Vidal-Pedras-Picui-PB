@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+*.pyc
+backend/database.db
+backend/__pycache__/
+*.lnk
+Downloads - Atalho.lnk
