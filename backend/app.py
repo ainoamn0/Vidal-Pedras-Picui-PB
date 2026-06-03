@@ -17,12 +17,54 @@ db.init_app(app)
 with app.app_context():
     db.create_all()
 
+def save_products_js():
+    try:
+        products = Product.query.all()
+        result = []
+        for p in products:
+            images_list = []
+            if p.images:
+                try:
+                    images_list = json.loads(p.images)
+                    if not isinstance(images_list, list):
+                        images_list = [images_list]
+                except Exception:
+                    images_list = p.images.split('|')
+            result.append({
+                'id': p.id,
+                'name': p.name,
+                'type': p.type,
+                'category': p.category,
+                'price': p.price,
+                'description': p.description,
+                'benefits': p.benefits,
+                'images': images_list
+            })
+        js_content = f"const products = {json.dumps(result, indent=4, ensure_ascii=False)};\n"
+        products_js_path = os.path.join(STATIC_DIR, 'products.js')
+        with open(products_js_path, 'w', encoding='utf-8') as f:
+            f.write(js_content)
+        print("Updated products.js successfully.")
+    except Exception as e:
+        print(f"Error saving products.js: {e}")
+
+with app.app_context():
+    save_products_js()
+
 # API Endpoints
 @app.route('/api/products', methods=['GET'])
 def get_products():
     products = Product.query.all()
     result = []
     for p in products:
+        images_list = []
+        if p.images:
+            try:
+                images_list = json.loads(p.images)
+                if not isinstance(images_list, list):
+                    images_list = [images_list]
+            except Exception:
+                images_list = p.images.split('|')
         result.append({
             'id': p.id,
             'name': p.name,
@@ -31,7 +73,7 @@ def get_products():
             'price': p.price,
             'description': p.description,
             'benefits': p.benefits,
-            'images': p.images.split('|') if p.images else []
+            'images': images_list
         })
     return jsonify(result)
 
@@ -40,7 +82,7 @@ def add_product():
     data = request.json
     if not data:
         abort(400, 'No data supplied')
-    images = '|'.join(data.get('images', []))
+    images = json.dumps(data.get('images', []))
     prod = Product(
         name=data.get('name'),
         type=data.get('type'),
@@ -52,6 +94,7 @@ def add_product():
     )
     db.session.add(prod)
     db.session.commit()
+    save_products_js()
     return jsonify({'msg': 'Product added', 'id': prod.id}), 201
 
 @app.route('/api/products/<int:pid>', methods=['PUT'])
@@ -68,8 +111,9 @@ def update_product(pid):
     prod.benefits = data.get('benefits', prod.benefits)
     images = data.get('images')
     if images is not None:
-        prod.images = '|'.join(images)
+        prod.images = json.dumps(images)
     db.session.commit()
+    save_products_js()
     return jsonify({'msg': 'Product updated'})
 
 @app.route('/api/products/<int:pid>', methods=['DELETE'])
@@ -77,6 +121,7 @@ def delete_product(pid):
     prod = Product.query.get_or_404(pid)
     db.session.delete(prod)
     db.session.commit()
+    save_products_js()
     return jsonify({'msg': 'Product deleted'}), 204
 
 # Serve static files (frontend)

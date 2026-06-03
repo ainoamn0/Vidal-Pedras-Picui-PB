@@ -6,14 +6,47 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentModalImages = [];
     let currentModalImageIndex = 0;
 
+    const isLocalServer = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const API_BASE = (isLocalServer && window.location.port !== '5000') ? 'http://127.0.0.1:5000' : '';
+    const isStaticHost = window.location.hostname.endsWith('github.io') || window.location.protocol === 'file:';
+
     let products = [];
+
+    function loadLocalProducts() {
+        const cachedProducts = localStorage.getItem('vidal_products_cache');
+        if (cachedProducts) {
+            try {
+                products = JSON.parse(cachedProducts);
+            } catch(e) {
+                products = window.products || [];
+            }
+        } else {
+            products = window.products || [];
+        }
+    }
 
     // ── Carregar produtos via API ──
     function fetchProducts() {
-        fetch('/api/products')
-            .then(res => res.json())
+        if (isStaticHost) {
+            console.log("Servidor estático detectado. Carregando dados locais/cache.");
+            loadLocalProducts();
+            renderSection('pedra', stonesContainer);
+            renderSection('acessorio', accessoriesContainer);
+            if (document.getElementById('table-general-modal')?.classList.contains('active')) {
+                renderAdminTable();
+            }
+            return;
+        }
+
+        fetch(`${API_BASE}/api/products`)
+            .then(res => {
+                if (!res.ok) throw new Error('Falha no status de resposta do backend');
+                return res.json();
+            })
             .then(data => {
                 products = data;
+                // Sincronizar cache local com o backend para consistência
+                localStorage.setItem('vidal_products_cache', JSON.stringify(products));
                 renderSection('pedra', stonesContainer);
                 renderSection('acessorio', accessoriesContainer);
                 if (document.getElementById('table-general-modal')?.classList.contains('active')) {
@@ -21,7 +54,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             })
             .catch(err => {
-                console.error('Erro ao carregar produtos:', err);
+                console.warn('Erro ao carregar produtos via API, usando fallback local:', err);
+                loadLocalProducts();
+                renderSection('pedra', stonesContainer);
+                renderSection('acessorio', accessoriesContainer);
+                if (document.getElementById('table-general-modal')?.classList.contains('active')) {
+                    renderAdminTable();
+                }
             });
     }
 
@@ -432,7 +471,87 @@ document.addEventListener('DOMContentLoaded', () => {
         closeAdminModal('github-config-modal');
     });
 
-    // 6. Sincronização removida (usando API REST agora)
+    // 6. Sincronização com o GitHub
+    function syncWithGitHub() {
+        const token = localStorage.getItem('gh-token');
+        const owner = localStorage.getItem('gh-owner');
+        const repo = localStorage.getItem('gh-repo');
+        const branch = localStorage.getItem('gh-branch') || 'main';
+
+        if (!token || !owner || !repo) {
+            showToast("⚠️ Alteração salva localmente. Configure o GitHub no botão ⚙️ para publicar na Web.", "info", 8000);
+            return;
+        }
+
+        const toast = showToast("🔄 Sincronizando alterações com o GitHub...", "info", 15000);
+
+        const url = `https://api.github.com/repos/${owner}/${repo}/contents/products.js`;
+        const productsContent = `const products = ${JSON.stringify(products, null, 4)};\n`;
+
+        // 1. Obter o SHA do arquivo atual no repositório
+        fetch(url, {
+            headers: {
+                'Authorization': `token ${token}`,
+                'Accept': 'application/vnd.github.v3+json',
+                'Cache-Control': 'no-cache'
+            }
+        })
+        .then(res => {
+            if (res.status === 404) {
+                // Se não existir, cria sem SHA
+                return { sha: null };
+            }
+            if (!res.ok) {
+                throw new Error(`Erro ao obter metadata do repositório (status ${res.status})`);
+            }
+            return res.json();
+        })
+        .then(data => {
+            const sha = data.sha;
+            
+            // 2. Converter conteúdo para base64 com suporte a UTF-8
+            const utf8Bytes = new TextEncoder().encode(productsContent);
+            let binary = '';
+            const len = utf8Bytes.byteLength;
+            for (let i = 0; i < len; i++) {
+                binary += String.fromCharCode(utf8Bytes[i]);
+            }
+            const base64Content = btoa(binary);
+
+            const bodyData = {
+                message: 'Atualizar catálogo de produtos via Painel Administrativo',
+                content: base64Content,
+                branch: branch
+            };
+            if (sha) {
+                bodyData.sha = sha;
+            }
+
+            return fetch(url, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `token ${token}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/vnd.github.v3+json'
+                },
+                body: JSON.stringify(bodyData)
+            });
+        })
+        .then(res => {
+            if (toast) toast.remove();
+            if (!res.ok) {
+                return res.json().then(errData => {
+                    throw new Error(errData.message || `HTTP status ${res.status}`);
+                });
+            }
+            showToast("✅ Publicado com sucesso no GitHub! O site será atualizado em 1 a 2 minutos.", "success", 6000);
+        })
+        .catch(err => {
+            if (toast) toast.remove();
+            console.error('Erro na sincronização com GitHub:', err);
+            showToast(`❌ Falha ao sincronizar com GitHub: ${err.message}`, "error", 8000);
+        });
+    }
 
     // 7. Lógica de Gerenciamento de Produtos (Criação, Edição, Remoção)
     let uploadedImagesBase64 = [];
@@ -585,7 +704,22 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!product) return;
 
         if (confirm(`Tem certeza que deseja excluir o produto "${product.name}"?`)) {
-            fetch(`/api/products/${id}`, { method: 'DELETE' })
+            if (isStaticHost) {
+                products = products.filter(p => p.id !== id);
+                localStorage.setItem('vidal_products_cache', JSON.stringify(products));
+                showToast(`🗑️ "${product.name}" excluído localmente.`, "success");
+                
+                renderSection('pedra', stonesContainer);
+                renderSection('acessorio', accessoriesContainer);
+                if (document.getElementById('table-general-modal')?.classList.contains('active')) {
+                    renderAdminTable();
+                }
+                
+                syncWithGitHub();
+                return;
+            }
+
+            fetch(`${API_BASE}/api/products/${id}`, { method: 'DELETE' })
                 .then(res => {
                     if (res.ok) {
                         showToast(`🗑️ "${product.name}" excluído.`, "success");
@@ -649,10 +783,39 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         const productId = productAdminId.value ? parseInt(productAdminId.value) : null;
+
+        if (isStaticHost) {
+            if (productId) {
+                // Editar
+                const idx = products.findIndex(p => p.id === productId);
+                if (idx > -1) {
+                    products[idx] = { id: productId, ...productData };
+                }
+            } else {
+                // Novo
+                const maxId = products.reduce((max, p) => p.id > max ? p.id : max, 0);
+                const newProduct = { id: maxId + 1, ...productData };
+                products.push(newProduct);
+            }
+
+            localStorage.setItem('vidal_products_cache', JSON.stringify(products));
+            showToast(`✅ "${name}" salvo localmente!`, "success");
+            closeAdminModal('product-admin-modal');
+
+            renderSection('pedra', stonesContainer);
+            renderSection('acessorio', accessoriesContainer);
+            if (document.getElementById('table-general-modal')?.classList.contains('active')) {
+                renderAdminTable();
+            }
+
+            syncWithGitHub();
+            return;
+        }
+
         const url = productId ? `/api/products/${productId}` : '/api/products';
         const method = productId ? 'PUT' : 'POST';
 
-        fetch(url, {
+        fetch(`${API_BASE}${url}`, {
             method: method,
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(productData)
