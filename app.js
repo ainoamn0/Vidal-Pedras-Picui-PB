@@ -12,20 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let products = [];
 
-    function loadLocalProducts() {
-        const cachedProducts = localStorage.getItem('vidal_products_cache');
-        if (cachedProducts) {
-            try {
-                products = JSON.parse(cachedProducts);
-            } catch(e) {
-                products = window.products || [];
-            }
-        } else {
-            products = window.products || [];
-        }
-    }
-
-    // ── Carregar produtos ──
+    // ── Renderizar e carregar produtos ──
     function renderProducts(data) {
         products = data;
         renderSection('pedra', stonesContainer);
@@ -37,55 +24,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function fetchProducts() {
         if (isStaticHost) {
-            // No GitHub Pages: buscar products.js pelo HTTP (sempre atualizado no servidor)
-            // Usar cache-busting para garantir que não pega versão antiga do cache do browser
-            const cacheBuster = `?t=${Date.now()}`;
-            fetch(`products.js${cacheBuster}`)
-                .then(res => {
-                    if (!res.ok) throw new Error('Falha ao carregar products.js');
-                    return res.text();
-                })
-                .then(text => {
-                    // Executar o conteúdo do products.js para obter o array
-                    const match = text.match(/const products\s*=\s*(\[[\s\S]*?\]);/);
-                    if (match) {
-                        const freshProducts = JSON.parse(match[1]);
-                        // Mesclar com eventuais adições locais ainda não sincronizadas
-                        const localCache = localStorage.getItem('vidal_products_cache');
-                        if (localCache) {
-                            try {
-                                const cached = JSON.parse(localCache);
-                                // Se o cache local tiver mais produtos que o remoto, usar o local
-                                // (significa que o sync ainda está em andamento)
-                                if (cached.length > freshProducts.length) {
-                                    renderProducts(cached);
-                                    return;
-                                }
-                            } catch(e) { /* ignorar */ }
-                        }
-                        // Atualizar o cache local com os dados frescos do servidor
-                        localStorage.setItem('vidal_products_cache', JSON.stringify(freshProducts));
-                        renderProducts(freshProducts);
-                    } else {
-                        throw new Error('Formato de products.js inválido');
+            // No GitHub Pages: window.products já foi carregado pelo <script src="products.js">
+            // que o navegador baixa direto do servidor, sempre atualizado.
+            // O cache local só é usado se há itens pendentes de sync.
+            const localCache = localStorage.getItem('vidal_products_cache');
+            const serverProducts = window.products || [];
+
+            if (localCache) {
+                try {
+                    const cached = JSON.parse(localCache);
+                    // Se cache local tem mais itens que o servidor, o sync ainda está pendente
+                    if (cached.length > serverProducts.length) {
+                        renderProducts(cached);
+                        return;
                     }
-                })
-                .catch(err => {
-                    console.warn('Não foi possível buscar products.js remoto, usando cache local:', err);
-                    // Fallback: cache local ou window.products
-                    const localCache = localStorage.getItem('vidal_products_cache');
-                    if (localCache) {
-                        try { renderProducts(JSON.parse(localCache)); return; } catch(e) {}
-                    }
-                    renderProducts(window.products || []);
-                });
+                } catch(e) { /* ignorar cache corrompido */ }
+            }
+            // Usar dados frescos do servidor (products.js carregado na página)
+            localStorage.setItem('vidal_products_cache', JSON.stringify(serverProducts));
+            renderProducts(serverProducts);
             return;
         }
 
         // Servidor Flask local
         fetch(`${API_BASE}/api/products`)
             .then(res => {
-                if (!res.ok) throw new Error('Falha no status de resposta do backend');
+                if (!res.ok) throw new Error('Falha no backend');
                 return res.json();
             })
             .then(data => {
@@ -93,11 +57,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 renderProducts(data);
             })
             .catch(err => {
-                console.warn('Erro ao carregar produtos via API, usando fallback local:', err);
-                const localCache = localStorage.getItem('vidal_products_cache');
-                if (localCache) {
-                    try { renderProducts(JSON.parse(localCache)); return; } catch(e) {}
-                }
+                console.warn('Erro ao carregar via API, usando window.products:', err);
                 renderProducts(window.products || []);
             });
     }
@@ -579,7 +539,20 @@ document.addEventListener('DOMContentLoaded', () => {
             if (toast) toast.remove();
             if (!res.ok) {
                 return res.json().then(errData => {
-                    throw new Error(errData.message || `HTTP status ${res.status}`);
+                    let detailedMsg = errData.message || `Erro HTTP ${res.status}`;
+                    if (res.status === 401 || res.status === 403) {
+                        detailedMsg = `Token inválido, expirado ou sem permissão 'repo' (Status: ${res.status})`;
+                    } else if (res.status === 404) {
+                        detailedMsg = `Repositório não encontrado. Verifique Owner e Repo (Status: 404)`;
+                    } else if (res.status === 409) {
+                        detailedMsg = `Conflito de edição. Alguém modificou o arquivo antes de você (Status: 409)`;
+                    }
+                    throw new Error(detailedMsg);
+                }).catch(e => {
+                    if (e.message.includes('Token') || e.message.includes('Repositório') || e.message.includes('Conflito')) {
+                        throw e; // Repassa nosso erro amigável
+                    }
+                    throw new Error(`Erro HTTP ${res.status} (Falha ao ler detalhes)`);
                 });
             }
             showToast("✅ Publicado com sucesso no GitHub! O site será atualizado em 1 a 2 minutos.", "success", 6000);
@@ -587,7 +560,13 @@ document.addEventListener('DOMContentLoaded', () => {
         .catch(err => {
             if (toast) toast.remove();
             console.error('Erro na sincronização com GitHub:', err);
-            showToast(`❌ Falha ao sincronizar com GitHub: ${err.message}`, "error", 8000);
+            
+            let finalMsg = err.message;
+            if (finalMsg === 'Failed to fetch') {
+                finalMsg = "Falha de conexão. O Token pode estar incorreto, expirado, ou há um problema de rede.";
+            }
+            
+            showToast(`❌ Erro GitHub: ${finalMsg}`, "error", 10000);
         });
     }
 
