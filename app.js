@@ -25,42 +25,80 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // ── Carregar produtos via API ──
+    // ── Carregar produtos ──
+    function renderProducts(data) {
+        products = data;
+        renderSection('pedra', stonesContainer);
+        renderSection('acessorio', accessoriesContainer);
+        if (document.getElementById('table-general-modal')?.classList.contains('active')) {
+            renderAdminTable();
+        }
+    }
+
     function fetchProducts() {
         if (isStaticHost) {
-            console.log("Servidor estático detectado. Carregando dados locais/cache.");
-            loadLocalProducts();
-            renderSection('pedra', stonesContainer);
-            renderSection('acessorio', accessoriesContainer);
-            if (document.getElementById('table-general-modal')?.classList.contains('active')) {
-                renderAdminTable();
-            }
+            // No GitHub Pages: buscar products.js pelo HTTP (sempre atualizado no servidor)
+            // Usar cache-busting para garantir que não pega versão antiga do cache do browser
+            const cacheBuster = `?t=${Date.now()}`;
+            fetch(`products.js${cacheBuster}`)
+                .then(res => {
+                    if (!res.ok) throw new Error('Falha ao carregar products.js');
+                    return res.text();
+                })
+                .then(text => {
+                    // Executar o conteúdo do products.js para obter o array
+                    const match = text.match(/const products\s*=\s*(\[[\s\S]*?\]);/);
+                    if (match) {
+                        const freshProducts = JSON.parse(match[1]);
+                        // Mesclar com eventuais adições locais ainda não sincronizadas
+                        const localCache = localStorage.getItem('vidal_products_cache');
+                        if (localCache) {
+                            try {
+                                const cached = JSON.parse(localCache);
+                                // Se o cache local tiver mais produtos que o remoto, usar o local
+                                // (significa que o sync ainda está em andamento)
+                                if (cached.length > freshProducts.length) {
+                                    renderProducts(cached);
+                                    return;
+                                }
+                            } catch(e) { /* ignorar */ }
+                        }
+                        // Atualizar o cache local com os dados frescos do servidor
+                        localStorage.setItem('vidal_products_cache', JSON.stringify(freshProducts));
+                        renderProducts(freshProducts);
+                    } else {
+                        throw new Error('Formato de products.js inválido');
+                    }
+                })
+                .catch(err => {
+                    console.warn('Não foi possível buscar products.js remoto, usando cache local:', err);
+                    // Fallback: cache local ou window.products
+                    const localCache = localStorage.getItem('vidal_products_cache');
+                    if (localCache) {
+                        try { renderProducts(JSON.parse(localCache)); return; } catch(e) {}
+                    }
+                    renderProducts(window.products || []);
+                });
             return;
         }
 
+        // Servidor Flask local
         fetch(`${API_BASE}/api/products`)
             .then(res => {
                 if (!res.ok) throw new Error('Falha no status de resposta do backend');
                 return res.json();
             })
             .then(data => {
-                products = data;
-                // Sincronizar cache local com o backend para consistência
-                localStorage.setItem('vidal_products_cache', JSON.stringify(products));
-                renderSection('pedra', stonesContainer);
-                renderSection('acessorio', accessoriesContainer);
-                if (document.getElementById('table-general-modal')?.classList.contains('active')) {
-                    renderAdminTable();
-                }
+                localStorage.setItem('vidal_products_cache', JSON.stringify(data));
+                renderProducts(data);
             })
             .catch(err => {
                 console.warn('Erro ao carregar produtos via API, usando fallback local:', err);
-                loadLocalProducts();
-                renderSection('pedra', stonesContainer);
-                renderSection('acessorio', accessoriesContainer);
-                if (document.getElementById('table-general-modal')?.classList.contains('active')) {
-                    renderAdminTable();
+                const localCache = localStorage.getItem('vidal_products_cache');
+                if (localCache) {
+                    try { renderProducts(JSON.parse(localCache)); return; } catch(e) {}
                 }
+                renderProducts(window.products || []);
             });
     }
 
