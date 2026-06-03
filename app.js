@@ -467,6 +467,9 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.setItem('gh-branch', document.getElementById('gh-admin-branch').value.trim());
         showToast("⚙️ Dados do GitHub gravados no navegador!", "success");
         closeAdminModal('github-config-modal');
+        
+        // Tenta forçar uma sincronização automaticamente após salvar as configurações
+        syncWithGitHub();
     });
 
     // 6. Sincronização com o GitHub
