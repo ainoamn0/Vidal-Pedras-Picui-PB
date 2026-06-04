@@ -8,24 +8,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const isLocalServer = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
     const API_BASE = (isLocalServer && window.location.port !== '5000') ? 'http://127.0.0.1:5000' : '';
-    const isStaticHost = window.location.hostname.endsWith('github.io') || window.location.protocol === 'file:';
 
     let products = [];
 
-    function loadLocalProducts() {
-        const cachedProducts = localStorage.getItem('vidal_products_cache');
-        if (cachedProducts) {
-            try {
-                products = JSON.parse(cachedProducts);
-            } catch(e) {
-                products = window.products || [];
-            }
-        } else {
-            products = window.products || [];
-        }
-    }
-
-    // ── Carregar produtos ──
+    // ── Renderizar e carregar produtos ──
     function renderProducts(data) {
         products = data;
         renderSection('pedra', stonesContainer);
@@ -36,73 +22,83 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function fetchProducts() {
-        if (isStaticHost) {
-            // No GitHub Pages: buscar products.js pelo HTTP (sempre atualizado no servidor)
-            // Usar cache-busting para garantir que não pega versão antiga do cache do browser
-            const cacheBuster = `?t=${Date.now()}`;
-            fetch(`products.js${cacheBuster}`)
-                .then(res => {
-                    if (!res.ok) throw new Error('Falha ao carregar products.js');
-                    return res.text();
-                })
-                .then(text => {
-                    // Executar o conteúdo do products.js para obter o array
-                    const match = text.match(/const products\s*=\s*(\[[\s\S]*?\]);/);
-                    if (match) {
-                        const freshProducts = JSON.parse(match[1]);
-                        // Mesclar com eventuais adições locais ainda não sincronizadas
-                        const localCache = localStorage.getItem('vidal_products_cache');
-                        if (localCache) {
-                            try {
-                                const cached = JSON.parse(localCache);
-                                // Se o cache local tiver mais produtos que o remoto, usar o local
-                                // (significa que o sync ainda está em andamento)
-                                if (cached.length > freshProducts.length) {
-                                    renderProducts(cached);
-                                    return;
-                                }
-                            } catch(e) { /* ignorar */ }
-                        }
-                        // Atualizar o cache local com os dados frescos do servidor
-                        localStorage.setItem('vidal_products_cache', JSON.stringify(freshProducts));
-                        renderProducts(freshProducts);
-                    } else {
-                        throw new Error('Formato de products.js inválido');
-                    }
-                })
-                .catch(err => {
-                    console.warn('Não foi possível buscar products.js remoto, usando cache local:', err);
-                    // Fallback: cache local ou window.products
-                    const localCache = localStorage.getItem('vidal_products_cache');
-                    if (localCache) {
-                        try { renderProducts(JSON.parse(localCache)); return; } catch(e) {}
-                    }
-                    renderProducts(window.products || []);
-                });
-            return;
-        }
-
-        // Servidor Flask local
+        // Servidor Flask local ou Remoto
         fetch(`${API_BASE}/api/products`)
             .then(res => {
-                if (!res.ok) throw new Error('Falha no status de resposta do backend');
+                if (!res.ok) throw new Error('Falha no backend');
                 return res.json();
             })
             .then(data => {
-                localStorage.setItem('vidal_products_cache', JSON.stringify(data));
                 renderProducts(data);
             })
             .catch(err => {
-                console.warn('Erro ao carregar produtos via API, usando fallback local:', err);
-                const localCache = localStorage.getItem('vidal_products_cache');
-                if (localCache) {
-                    try { renderProducts(JSON.parse(localCache)); return; } catch(e) {}
-                }
-                renderProducts(window.products || []);
+                console.warn('Erro ao carregar via API:', err);
+                showToast("Erro ao carregar os produtos. Verifique se o servidor Flask está rodando.", "error");
             });
     }
 
     fetchProducts();
+
+    // ── Search / Filter by Stone Name ──
+    const searchInput = document.getElementById('search-stones-input');
+    const searchClear = document.getElementById('search-stones-clear');
+    const searchCount = document.getElementById('search-stones-count');
+
+    let searchDebounceTimer = null;
+
+    function filterStonesByName(query) {
+        const cards = stonesContainer.querySelectorAll('.product-card');
+        if (!cards.length) return;
+
+        const normalizedQuery = query.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        let visibleCount = 0;
+
+        cards.forEach(card => {
+            const title = card.querySelector('.product-title')?.textContent || '';
+            const normalizedTitle = title.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+            if (!normalizedQuery || normalizedTitle.includes(normalizedQuery)) {
+                card.style.display = '';
+                card.style.opacity = '1';
+                visibleCount++;
+            } else {
+                card.style.display = 'none';
+            }
+        });
+
+        if (searchCount) {
+            if (!normalizedQuery) {
+                searchCount.textContent = '';
+            } else if (visibleCount === 0) {
+                searchCount.textContent = 'Nenhuma pedra encontrada';
+            } else {
+                searchCount.textContent = `${visibleCount} pedra${visibleCount > 1 ? 's' : ''} encontrada${visibleCount > 1 ? 's' : ''}`;
+            }
+        }
+
+        // Toggle clear button visibility
+        if (searchClear) {
+            searchClear.classList.toggle('visible', query.length > 0);
+        }
+    }
+
+    if (searchInput) {
+        searchInput.addEventListener('input', () => {
+            clearTimeout(searchDebounceTimer);
+            searchDebounceTimer = setTimeout(() => {
+                filterStonesByName(searchInput.value.trim());
+            }, 200);
+        });
+    }
+
+    if (searchClear) {
+        searchClear.addEventListener('click', () => {
+            searchInput.value = '';
+            filterStonesByName('');
+            searchInput.focus();
+        });
+    }
+
 
     // GSAP Initialization
     gsap.registerPlugin(ScrollTrigger);
@@ -488,108 +484,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 5. Configuração do GitHub
-    document.getElementById('admin-gh-btn')?.addEventListener('click', () => {
-        document.getElementById('gh-admin-token').value = localStorage.getItem('gh-token') || '';
-        document.getElementById('gh-admin-owner').value = localStorage.getItem('gh-owner') || '';
-        document.getElementById('gh-admin-repo').value = localStorage.getItem('gh-repo') || '';
-        document.getElementById('gh-admin-branch').value = localStorage.getItem('gh-branch') || 'main';
-        openAdminModal('github-config-modal');
-    });
 
-    document.getElementById('close-github-config-btn')?.addEventListener('click', () => closeAdminModal('github-config-modal'));
-
-    document.getElementById('github-admin-form')?.addEventListener('submit', (e) => {
-        e.preventDefault();
-        localStorage.setItem('gh-token', document.getElementById('gh-admin-token').value.trim());
-        localStorage.setItem('gh-owner', document.getElementById('gh-admin-owner').value.trim());
-        localStorage.setItem('gh-repo', document.getElementById('gh-admin-repo').value.trim());
-        localStorage.setItem('gh-branch', document.getElementById('gh-admin-branch').value.trim());
-        showToast("⚙️ Dados do GitHub gravados no navegador!", "success");
-        closeAdminModal('github-config-modal');
-    });
-
-    // 6. Sincronização com o GitHub
-    function syncWithGitHub() {
-        const token = localStorage.getItem('gh-token');
-        const owner = localStorage.getItem('gh-owner');
-        const repo = localStorage.getItem('gh-repo');
-        const branch = localStorage.getItem('gh-branch') || 'main';
-
-        if (!token || !owner || !repo) {
-            showToast("⚠️ Alteração salva localmente. Configure o GitHub no botão ⚙️ para publicar na Web.", "info", 8000);
-            return;
-        }
-
-        const toast = showToast("🔄 Sincronizando alterações com o GitHub...", "info", 15000);
-
-        const url = `https://api.github.com/repos/${owner}/${repo}/contents/products.js`;
-        const productsContent = `const products = ${JSON.stringify(products, null, 4)};\n`;
-
-        // 1. Obter o SHA do arquivo atual no repositório
-        fetch(url, {
-            headers: {
-                'Authorization': `token ${token}`,
-                'Accept': 'application/vnd.github.v3+json',
-                'Cache-Control': 'no-cache'
-            }
-        })
-        .then(res => {
-            if (res.status === 404) {
-                // Se não existir, cria sem SHA
-                return { sha: null };
-            }
-            if (!res.ok) {
-                throw new Error(`Erro ao obter metadata do repositório (status ${res.status})`);
-            }
-            return res.json();
-        })
-        .then(data => {
-            const sha = data.sha;
-            
-            // 2. Converter conteúdo para base64 com suporte a UTF-8
-            const utf8Bytes = new TextEncoder().encode(productsContent);
-            let binary = '';
-            const len = utf8Bytes.byteLength;
-            for (let i = 0; i < len; i++) {
-                binary += String.fromCharCode(utf8Bytes[i]);
-            }
-            const base64Content = btoa(binary);
-
-            const bodyData = {
-                message: 'Atualizar catálogo de produtos via Painel Administrativo',
-                content: base64Content,
-                branch: branch
-            };
-            if (sha) {
-                bodyData.sha = sha;
-            }
-
-            return fetch(url, {
-                method: 'PUT',
-                headers: {
-                    'Authorization': `token ${token}`,
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/vnd.github.v3+json'
-                },
-                body: JSON.stringify(bodyData)
-            });
-        })
-        .then(res => {
-            if (toast) toast.remove();
-            if (!res.ok) {
-                return res.json().then(errData => {
-                    throw new Error(errData.message || `HTTP status ${res.status}`);
-                });
-            }
-            showToast("✅ Publicado com sucesso no GitHub! O site será atualizado em 1 a 2 minutos.", "success", 6000);
-        })
-        .catch(err => {
-            if (toast) toast.remove();
-            console.error('Erro na sincronização com GitHub:', err);
-            showToast(`❌ Falha ao sincronizar com GitHub: ${err.message}`, "error", 8000);
-        });
-    }
 
     // 7. Lógica de Gerenciamento de Produtos (Criação, Edição, Remoção)
     let uploadedImagesBase64 = [];
@@ -742,21 +637,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!product) return;
 
         if (confirm(`Tem certeza que deseja excluir o produto "${product.name}"?`)) {
-            if (isStaticHost) {
-                products = products.filter(p => p.id !== id);
-                localStorage.setItem('vidal_products_cache', JSON.stringify(products));
-                showToast(`🗑️ "${product.name}" excluído localmente.`, "success");
-                
-                renderSection('pedra', stonesContainer);
-                renderSection('acessorio', accessoriesContainer);
-                if (document.getElementById('table-general-modal')?.classList.contains('active')) {
-                    renderAdminTable();
-                }
-                
-                syncWithGitHub();
-                return;
-            }
-
             fetch(`${API_BASE}/api/products/${id}`, { method: 'DELETE' })
                 .then(res => {
                     if (res.ok) {
@@ -821,34 +701,6 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         const productId = productAdminId.value ? parseInt(productAdminId.value) : null;
-
-        if (isStaticHost) {
-            if (productId) {
-                // Editar
-                const idx = products.findIndex(p => p.id === productId);
-                if (idx > -1) {
-                    products[idx] = { id: productId, ...productData };
-                }
-            } else {
-                // Novo
-                const maxId = products.reduce((max, p) => p.id > max ? p.id : max, 0);
-                const newProduct = { id: maxId + 1, ...productData };
-                products.push(newProduct);
-            }
-
-            localStorage.setItem('vidal_products_cache', JSON.stringify(products));
-            showToast(`✅ "${name}" salvo localmente!`, "success");
-            closeAdminModal('product-admin-modal');
-
-            renderSection('pedra', stonesContainer);
-            renderSection('acessorio', accessoriesContainer);
-            if (document.getElementById('table-general-modal')?.classList.contains('active')) {
-                renderAdminTable();
-            }
-
-            syncWithGitHub();
-            return;
-        }
 
         const url = productId ? `/api/products/${productId}` : '/api/products';
         const method = productId ? 'PUT' : 'POST';

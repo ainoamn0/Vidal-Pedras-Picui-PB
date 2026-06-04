@@ -319,6 +319,91 @@ section {
     border-color: var(--primary-emerald);
 }
 
+/* Search Bar */
+.search-container {
+    max-width: 520px;
+    margin: 0 auto 40px;
+}
+
+.search-box {
+    display: flex;
+    align-items: center;
+    background: #ffffff;
+    border: 2px solid rgba(0, 0, 0, 0.08);
+    border-radius: 16px;
+    padding: 4px 6px 4px 18px;
+    transition: var(--transition-smooth);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+}
+
+.search-box:focus-within {
+    border-color: var(--primary-emerald);
+    box-shadow: 0 4px 20px rgba(13, 110, 253, 0.12);
+}
+
+.search-icon {
+    flex-shrink: 0;
+    color: var(--text-secondary);
+    opacity: 0.5;
+    transition: var(--transition-smooth);
+}
+
+.search-box:focus-within .search-icon {
+    color: var(--primary-emerald);
+    opacity: 1;
+}
+
+.search-box input {
+    flex: 1;
+    border: none;
+    outline: none;
+    padding: 12px 14px;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+    background: transparent;
+}
+
+.search-box input::placeholder {
+    color: var(--text-secondary);
+    opacity: 0.5;
+}
+
+.search-clear {
+    display: none;
+    background: #f0f0f0;
+    border: none;
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
+    font-size: 1.2rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: var(--transition-smooth);
+    flex-shrink: 0;
+    line-height: 1;
+}
+
+.search-clear.visible {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.search-clear:hover {
+    background: #ff4d4f;
+    color: white;
+}
+
+.search-result-count {
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-top: 10px;
+    min-height: 1.2em;
+    opacity: 0.7;
+}
+
 /* Product Grid */
 .product-grid {
     display: grid;
@@ -558,6 +643,10 @@ footer {
 
     section { padding: 60px 5%; }
     .section-header h2 { font-size: 2.2rem; }
+
+    .search-container { margin-bottom: 25px; }
+    .search-box { border-radius: 12px; padding: 2px 4px 2px 14px; }
+    .search-box input { padding: 10px 10px; font-size: 0.85rem; }
 
     /* Force 2 column layout */
     .product-grid {
